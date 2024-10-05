@@ -53,7 +53,7 @@ void built_in_commands(char *input, char *last_command) {
         strcpy(input, last_command);  // Re-run the last command
     }
 }
-// 5 (NOT GOOD YET): execute without command line redirection
+// 5 (GOOD): execute without command line redirection
 void execute_command(char *input) {
     pid_t pid = fork();
 
@@ -71,7 +71,7 @@ void execute_command(char *input) {
     }
 }
 
-// 6 (NOT GOOD YET): execute with command line redirection
+// 6 (GOOD?): execute with command line redirection
 void execute_with_redirection(char *input) {
     char *cmd = strtok(input, ">");
     char *filename = strtok(NULL, " ");
@@ -86,7 +86,7 @@ void execute_with_redirection(char *input) {
         
         char *args[] = {cmd, NULL};
         execvp(args[0], args);
-        perror("exec failed");
+        //perror("exec failed!");
         exit(1);
     } else if (pid > 0) {
         // Parent process waits for child to finish
@@ -170,7 +170,14 @@ int main() {
         } else if (strchr(input, '|') != NULL) {
             char *cmd1 = strtok(input, "|");
             char *cmd2 = strtok(NULL, "|");
-            process_pipe_cmds(cmd1, cmd2);
+            if (cmd1 != NULL && cmd2 != NULL) {
+                // Remove leading and trailing spaces from cmd1 and cmd2
+                while (*cmd1 == ' ') cmd1++;
+                while (*cmd2 == ' ') cmd2++;
+                cmd1[strcspn(cmd1, " ")] = 0;
+                cmd2[strcspn(cmd2, " ")] = 0;
+                process_pipe_cmds(cmd1, cmd2);
+            }
         } else {
             execute_command(input);
         }
