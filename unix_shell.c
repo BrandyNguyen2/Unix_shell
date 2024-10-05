@@ -1,280 +1,188 @@
-#include<stdio.h>
-#include<string.h>
-#include<stdlib.h>
-#include<unistd.h>
-#include<sys/types.h>
-#include<sys/wait.h>
-#include<readline/readline.h>
-#include<readline/history.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
-#define MAXCOM 1000 // max number of letters to be supported
-#define MAXLIST 100 // max number of commands to be supported
+#define MAX_INPUT_SIZE 1024
 
-// Clearing the shell using escape sequences
-#define clear() printf("\033[H\033[J")
-
-void parse(char *line, char **argv)
-{
-    while (*line != '\0')
-    {
-        while (*line == ' ' || *line == '\t' || *line == '\n')
-        {
-            *line++ = '\0'; // replace white spaces with null terminator
-        }
-        *argv++ = line; // store the argument position
-        while (*line != '\0' && *line != ' ' && *line != '\t' && *line != '\n')
-        {
-            line++; // move to the next space
-        }
-    }
-    *argv = NULL; // mark the end of argument list
-}
-
-void parse_and_echo(char *line, char **argv)
-{
-    int echo = 0;
-    int argc = 0;
-
-    while (*line != '\0')
-    { 
-        while (*line == ' ' || *line == '\t' || *line == '\n')
-        {
-            *line++ = '\0'; // replace white spaces with 0
-        }
-
-        if (*line != '\0')
-        {
-            argv[argc++] = line;
-        }
-
-        while (*line != '\0' && *line != ' ' && *line != '\t' && *line != '\n')
-        {
-            line++;
-        }
-    }
-
-    argv[argc] = '\0'; // mark the end of argument list
-
-    // Check if last argument is "ECHO"
-    if (argc > 0 && strcmp(argv[argc - 1], "ECHO") == 0)
-    {
-        echo = 1;
-    }
-
-    // Print each word on a new line if "ECHO" is present
-    if (echo)
-    {
-        for (int i = 0; i < argc - 1; i++)
-        {
-            printf("%s\n", argv[i]);
+void parse_echo(char *input) {
+    for (int i = 0; input[i] != '\0'; i++) {
+        if (input[i] == ' ') {
+            printf("SPACE\n");
+        } else if (input[i] == '|') {
+            printf("PIPE\n");
+        } else {
+            // Print the word character by character until a space or pipe is found
+            int start = i;
+            while (input[i] != ' ' && input[i] != '|' && input[i] != '\0') {
+                i++;
+            }
+            // Print the word found
+            char word[MAX_INPUT_SIZE];
+            strncpy(word, &input[start], i - start);
+            word[i - start] = '\0'; // Null terminate the string
+            printf("%s\n", word);
+            i--; // Adjust for loop increment
         }
     }
 }
 
-void execute_pipe(char **argv1, char **argv2)
-{
+void print_spaces(char *input) {
+    for (int i = 0; input[i] != '\0'; i++) {
+        if (input[i] == ' ') {
+            printf("SPACE\n");
+        } else {
+            putchar(input[i]);
+        }
+    }
+    printf("\n");
+}
+
+void print_pipes(char *input) {
+    for (int i = 0; input[i] != '\0'; i++) {
+        if (input[i] == '|') {
+            printf("PIPE\n");
+        } else {
+            putchar(input[i]);
+        }
+    }
+    printf("\n");
+}
+
+void built_in_commands(char *input, char *last_command) {
+    if (strcmp(input, "help") == 0) {
+        printf("Available commands: help, cd, mkdir, exit, !!\n");
+    } else if (strncmp(input, "cd", 2) == 0) {
+        char *path = input + 3;
+        if (chdir(path) != 0) {
+            perror("cd failed");
+        }
+    } else if (strncmp(input, "mkdir", 5) == 0) {
+        char *dir_name = input + 6;
+        if (mkdir(dir_name, 0777) != 0) {
+            perror("mkdir failed");
+        }
+    } else if (strcmp(input, "exit") == 0) {
+        exit(0);
+    } else if (strcmp(input, "!!") == 0 && last_command != NULL) {
+        printf("Running last command: %s\n", last_command);
+        strcpy(input, last_command);  // Re-run the last command
+    }
+}
+
+void execute_command(char *input) {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child process
+        char *args[] = {input, NULL};
+        execvp(args[0], args);
+        perror("exec failed");
+        exit(1);
+    } else if (pid > 0) {
+        // Parent process waits for child to finish
+        wait(NULL);
+    } else {
+        perror("fork failed");
+    }
+}
+
+void execute_with_redirection(char *input) {
+    char *cmd = strtok(input, ">");
+    char *filename = strtok(NULL, " ");
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        // Child process
+        int fd = open(filename, O_WRONLY | O_CREAT, 0644);
+        dup2(fd, STDOUT_FILENO); // Redirect stdout to file
+        close(fd);
+        
+        char *args[] = {cmd, NULL};
+        execvp(args[0], args);
+        perror("exec failed");
+        exit(1);
+    } else if (pid > 0) {
+        // Parent process waits for child to finish
+        wait(NULL);
+    } else {
+        perror("fork failed");
+    }
+}
+
+void execute_with_pipe(char *cmd1, char *cmd2) {
     int pipefd[2];
-    pid_t pid1, pid2;
-
     pipe(pipefd);
 
-    pid1 = fork();
-    if (pid1 == 0)
-    {
-        dup2(pipefd[1], STDOUT_FILENO); // Redirect stdout to pipe
+    pid_t pid1 = fork();
+
+    if (pid1 == 0) {
+        // First child - write to pipe
+        dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[0]);
         close(pipefd[1]);
-        execvp(argv1[0], argv1);
-        exit(0);
+        char *args1[] = {cmd1, NULL};
+        execvp(args1[0], args1);
+        perror("exec1 failed");
+        exit(1);
     }
 
-    pid2 = fork();
-    if (pid2 == 0)
-    {
-        dup2(pipefd[0], STDIN_FILENO); // Redirect stdin to pipe
-        close(pipefd[1]);
+    pid_t pid2 = fork();
+
+    if (pid2 == 0) {
+        // Second child - read from pipe
+        dup2(pipefd[0], STDIN_FILENO);
         close(pipefd[0]);
-        execvp(argv2[0], argv2);
-        exit(0);
+        close(pipefd[1]);
+        char *args2[] = {cmd2, NULL};
+        execvp(args2[0], args2);
+        perror("exec2 failed");
+        exit(1);
     }
 
+    // Parent process
     close(pipefd[0]);
     close(pipefd[1]);
     wait(NULL);
     wait(NULL);
 }
 
-int split_pipe(char *line, char **cmd1, char **cmd2)
-{
-    char *pipe_position = strchr(line, '|');
-    if (pipe_position != NULL)
-    {
-        *pipe_position = '\0'; // split into two commands
-        parse(line, cmd1);
-        parse(pipe_position + 1, cmd2);
-        return 1;
+int main() {
+    char input[MAX_INPUT_SIZE];
+    char last_command[MAX_INPUT_SIZE] = {0};
+
+    while (1) {
+        printf("shell> ");
+        fgets(input, MAX_INPUT_SIZE, stdin);
+        input[strcspn(input, "\n")] = 0; // Remove trailing newline
+
+        // Save the input as last command for !!
+        strcpy(last_command, input);
+
+        // Check for special commands
+        if (strstr(input, "ECHO") != NULL) {
+            parse_echo(input);
+        } else if (strchr(input, ' ') != NULL) {
+            print_spaces(input);
+        } else if (strchr(input, '|') != NULL) {
+            print_pipes(input);
+        } else if (strstr(input, "help") || strstr(input, "cd") || strstr(input, "mkdir") || strstr(input, "exit") || strstr(input, "!!")) {
+            built_in_commands(input, last_command);
+        } else if (strchr(input, '>') != NULL) {
+            execute_with_redirection(input);
+        } else if (strchr(input, '|') != NULL) {
+            char *cmd1 = strtok(input, "|");
+            char *cmd2 = strtok(NULL, "|");
+            execute_with_pipe(cmd1, cmd2);
+        } else {
+            execute_command(input);
+        }
     }
+
     return 0;
 }
-
-void execute(char **argv)
-{
-    int i = 0;
-    int in_redirect = 0, out_redirect = 0;
-    char *input_file = NULL, *output_file = NULL;
-
-    while (argv[i] != NULL)
-    {
-        if (strcmp(argv[i], "<") == 0)
-        {
-            in_redirect = 1;
-            input_file = argv[i + 1];
-            argv[i] = NULL; // Cut the command here
-        }
-        else if (strcmp(argv[i], ">") == 0)
-        {
-            out_redirect = 1;
-            output_file = argv[i + 1];
-            argv[i] = NULL;
-        }
-        i++;
-    }
-
-    pid_t pid = fork();
-    if (pid == 0)
-    {
-        if (in_redirect)
-        {
-            freopen(input_file, "r", stdin);
-        }
-        if (out_redirect)
-        {
-            freopen(output_file, "w", stdout);
-        }
-        execvp(argv[0], argv);
-        exit(0);
-    }
-    else
-    {
-        wait(NULL);
-    }
-}
-\
-
-void detect_special_chars(char *line)
-{
-    while (*line != '\0')
-    {
-        if (*line == ' ')
-        {
-            printf("SPACE ");
-        }
-        else if (*line == '|')
-        {
-            printf("PIPE ");
-        }
-        else
-        {
-            putchar(*line);
-        }
-        line++;
-    }
-    printf("\n");
-}
-
-void execute_builtin(char **argv)
-{
-    if (strcmp(argv[0], "help") == 0)
-    {
-        printf("Supported commands:\n");
-        printf("- help\n");
-        printf("- cd\n");
-        printf("- mkdir\n");
-        printf("- exit\n");
-        printf("- !! (repeats the last command)\n");
-    }
-    else if (strcmp(argv[0], "cd") == 0)
-    {
-        if (argv[1] != NULL)
-        {
-            if (chdir(argv[1]) != 0)
-            {
-                perror("cd failed");
-            }
-        }
-        else
-        {
-            printf("Expected argument to \"cd\"\n");
-        }
-    }
-    else if (strcmp(argv[0], "mkdir") == 0)
-    {
-        if (argv[1] != NULL)
-        {
-            if (mkdir(argv[1], 0777) == -1)
-            {
-                perror("mkdir failed");
-            }
-        }
-        else
-        {
-            printf("Expected argument to \"mkdir\"\n");
-        }
-    }
-}
-
-void main(void)
-{
-    char line[1024];
-    char *argv[64], *argv_pipe[64];
-    char last_command[1024] = "";
-
-    while (1)
-    {
-        printf("Shell -> ");
-        fgets(line, 1024, stdin);
-
-        if (strcmp(line, "!!\n") == 0)
-        {
-            if (strlen(last_command) > 0)
-            {
-                strcpy(line, last_command);
-            }
-            else
-            {
-                printf("No previous command.\n");
-                continue;
-            }
-        }
-        else
-        {
-            strcpy(last_command, line); // Save the last command
-        }
-
-        if (split_pipe(line, argv, argv_pipe)) // If pipe is present
-        {
-            execute_pipe(argv, argv_pipe);
-        }
-        else
-        {
-            parse(line, argv); // Regular command parsing
-
-            if (argv[0] == NULL)
-                continue; // Skip if no command was entered
-
-            if (strcmp(argv[0], "exit") == 0)
-            {
-                exit(0);
-            }
-            else if (strcmp(argv[0], "help") == 0 || strcmp(argv[0], "cd") == 0 || strcmp(argv[0], "mkdir") == 0)
-            {
-                execute_builtin(argv);
-            }
-            else
-            {
-                execute(argv);
-            }
-        }
-    }
-}
-
