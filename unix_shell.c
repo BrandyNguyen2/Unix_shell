@@ -9,6 +9,7 @@
 
 #define MAX_INPUT_SIZE 1024
 
+// 1, 2, & 3 (GOOD): parses commands and echo them back
 void parse_echo(char *input) {
     for (int i = 0; input[i] != '\0'; i++) {
         if (input[i] == ' ') {
@@ -31,28 +32,7 @@ void parse_echo(char *input) {
     }
 }
 
-void print_spaces(char *input) {
-    for (int i = 0; input[i] != '\0'; i++) {
-        if (input[i] == ' ') {
-            printf("SPACE\n");
-        } else {
-            putchar(input[i]);
-        }
-    }
-    printf("\n");
-}
-
-void print_pipes(char *input) {
-    for (int i = 0; input[i] != '\0'; i++) {
-        if (input[i] == '|') {
-            printf("PIPE\n");
-        } else {
-            putchar(input[i]);
-        }
-    }
-    printf("\n");
-}
-
+// 4 (!! still needs to be fixed): run built-in commands
 void built_in_commands(char *input, char *last_command) {
     if (strcmp(input, "help") == 0) {
         printf("Available commands: help, cd, mkdir, exit, !!\n");
@@ -73,7 +53,7 @@ void built_in_commands(char *input, char *last_command) {
         strcpy(input, last_command);  // Re-run the last command
     }
 }
-
+// 5 (NOT GOOD YET): execute without command line redirection
 void execute_command(char *input) {
     pid_t pid = fork();
 
@@ -91,6 +71,7 @@ void execute_command(char *input) {
     }
 }
 
+// 6 (NOT GOOD YET): execute with command line redirection
 void execute_with_redirection(char *input) {
     char *cmd = strtok(input, ">");
     char *filename = strtok(NULL, " ");
@@ -115,41 +96,56 @@ void execute_with_redirection(char *input) {
     }
 }
 
-void execute_with_pipe(char *cmd1, char *cmd2) {
-    int pipefd[2];
-    pipe(pipefd);
+// 7 (NOT GOOD YET): execute two commands connected by a pipe
+void process_pipe_cmds(char **argv1, char **argv2) {
+  int p[2];
 
-    pid_t pid1 = fork();
+  if (pipe(p) < 0) {
+    perror("Pipe failed");
+    exit(1);
+  }
 
-    if (pid1 == 0) {
-        // First child - write to pipe
-        dup2(pipefd[1], STDOUT_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *args1[] = {cmd1, NULL};
-        execvp(args1[0], args1);
-        perror("exec1 failed");
-        exit(1);
+  pid_t pid1 = fork();
+
+  if (pid1 < 0) {
+    perror("Fork for first command failed");
+    exit(1);
+  }
+
+  if (pid1 == 0) {
+    dup2(p[1], STDOUT_FILENO);
+    close(p[0]);
+    close(p[1]);
+
+    if (execvp(argv1[0], argv1) < 0) {
+      printf("Execution of first command failed");
+      exit(1);
     }
+  }
 
-    pid_t pid2 = fork();
+  pid_t pid2 = fork();
 
-    if (pid2 == 0) {
-        // Second child - read from pipe
-        dup2(pipefd[0], STDIN_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *args2[] = {cmd2, NULL};
-        execvp(args2[0], args2);
-        perror("exec2 failed");
-        exit(1);
+  if (pid2 < 0) {
+    printf("Fork for second command failed");
+    exit(1);
+  }
+
+  if (pid2 == 0) {
+    dup2(p[0], STDIN_FILENO);
+    close(p[1]);
+    close(p[0]);
+
+    if (execvp(argv2[0], argv2) < 0) {
+      printf("Execution of second command failed");
+      exit(1);
     }
+  }
 
-    // Parent process
-    close(pipefd[0]);
-    close(pipefd[1]);
-    wait(NULL);
-    wait(NULL);
+  close(p[0]);
+  close(p[1]);
+
+  waitpid(pid1, NULL, 0);
+  waitpid(pid2, NULL, 0);
 }
 
 int main() {
@@ -167,10 +163,6 @@ int main() {
         // Check for special commands
         if (strstr(input, "ECHO") != NULL) {
             parse_echo(input);
-        } else if (strchr(input, ' ') != NULL) {
-            print_spaces(input);
-        } else if (strchr(input, '|') != NULL) {
-            print_pipes(input);
         } else if (strstr(input, "help") || strstr(input, "cd") || strstr(input, "mkdir") || strstr(input, "exit") || strstr(input, "!!")) {
             built_in_commands(input, last_command);
         } else if (strchr(input, '>') != NULL) {
@@ -178,7 +170,7 @@ int main() {
         } else if (strchr(input, '|') != NULL) {
             char *cmd1 = strtok(input, "|");
             char *cmd2 = strtok(NULL, "|");
-            execute_with_pipe(cmd1, cmd2);
+            process_pipe_cmds(cmd1, cmd2);
         } else {
             execute_command(input);
         }
