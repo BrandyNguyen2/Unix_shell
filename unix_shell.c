@@ -9,6 +9,8 @@
 
 #define MAX_INPUT_SIZE 1024
 
+void parse_command(char *command, char **argv);
+
 // 1, 2, & 3: parses commands and echo them back
 void parse_echo(char *input) 
 {
@@ -52,6 +54,10 @@ void built_in_commands(char *input, char *last_command)
     else if (strncmp(input, "cd", 2) == 0) 
     {
         char *path = input + 3;
+        if (strcmp(path, "~") == 0) 
+        {
+            path = getenv("HOME");
+        }
         if (chdir(path) != 0) 
         {
             perror("cd failed");
@@ -86,23 +92,24 @@ void built_in_commands(char *input, char *last_command)
 // 5 : execute without command line redirection (just like fork() from hw)
 void execute_command(char *input) 
 {
+    char *args[MAX_INPUT_SIZE];
+    parse_command(input, args);  
     pid_t pid = fork();
 
     if (pid == 0) 
     {
-        // Child process
-        char *args[] = {input, NULL};
-        execvp(args[0], args);
-        perror("exec failed");
+        execvp(args[0], args);  
+        perror("exec failed");  
         exit(1);
     } 
     else if (pid > 0) 
     {
-        // Parent process waits for child to finish
+        // Parent process: waits for child process to finish
         wait(NULL);
     } 
     else 
     {
+        // Fork failed
         perror("fork failed");
     }
 }
@@ -205,8 +212,9 @@ void parse_command(char *command, char **argv)
         argv[index++] = token;
         token = strtok(NULL, " ");
     }
-    argv[index] = NULL; 
+    argv[index] = NULL;  // Null-terminate the argument list for execvp
 }
+
 
 int main() 
 {
